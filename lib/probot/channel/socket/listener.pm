@@ -24,7 +24,6 @@ has tcp_server => (
     isa         => 'Maybe[POE::Wheel::SocketFactory]',
     is          => 'rw'
 );
-
 has tcp_server_alias  => (
     isa         => 'Str',
     is          => 'ro',
@@ -35,6 +34,12 @@ sub build_tcp_server_alias {
     my ($self) = @_;
     return $self->alias . '/tcp_server',
 }
+# sockets, indexed by POE wheel ID
+has sockets => (
+    isa     => 'Maybe[HashRef]',
+    default => sub { {} },
+    is      => 'ro',
+);
 
 after ev_started => sub {
     my ($self, $kernel) = @_[OBJECT, KERNEL];
@@ -44,9 +49,9 @@ after ev_started => sub {
 
         $self->tcp_server(POE::Wheel::SocketFactory->new(
             BindPort        => $self->port,
-            Alias           => $self->tcp_server_alias,
+            # Alias           => $self->tcp_server_alias,
             SuccessEvent    => "ev_connected",
-            FailureEvent    => "ev_error",
+            FailureEvent    => "ev_server_error",
         ));
     };  if ($@) {
         my $e = $@;  chomp $e;
@@ -57,54 +62,58 @@ after ev_started => sub {
 };
 
 event ev_connected => sub {
-    my ($self, $kernel, $heap) = @_[OBJECT, KERNEL, HEAP, ARG0];
-    $self->verbose(sprintf('[ev_connected][%s:%s]', $heap->{remote_ip}, $heap->{remote_port}));
+    my ($self, $kernel, $heap, $socket, $remote_ip_packed, $remote_port) = @_[OBJECT, KERNEL, HEAP, ARG0, ARG1, ARG2];
+    # For INET sockets, $_[ARG1] and $_[ARG2] hold the socket's remote
+    # address and port, respectively.  The address is packed; see
+    my $remote_ip = inet_ntoa($remote_ip_packed);
+    my $io_wheel = POE::Wheel::ReadWrite->new(
+      Handle        => $socket,
+      InputEvent    => "ev_client_input",
+      ErrorEvent    => "ev_client_error",
+    );
+    $self->sockets->{$io_wheel->ID} = $io_wheel;
+    $self->verbose(sprintf('[ev_connected][%s:%s] id:%s', $remote_ip, $remote_port, $io_wheel->ID));
 };
 
-event ev_got_input => sub {
-    my ($self, $kernel, $heap, $input) = @_[OBJECT, KERNEL, HEAP, ARG0];
-    $self->verbose(sprintf('[ev_got_input][%s:%s] %s', $heap->{remote_ip}, $heap->{remote_port}, $input));
-    $kernel->call($self->tcp_server_alias, 'shutdown');
-};
+event ev_client_input => sub {
+    my ($self, $kernel, $input, $id) = @_[OBJECT, KERNEL, ARG0, ARG1];
+    # $self->verbose(sprintf('[ev_got_input][%s:%s] id:%s %s', $heap->{remote_ip}, $heap->{remote_port}, $id, $input));
+    $self->verbose(sprintf('[ev_got_input] id:%s %s', $id, $input));
 
-event ev_error => sub {
-    my ($self, $kernel, $operation, $errnum, $errstr) = @_[OBJECT, KERNEL, ARG0, ARG1, ARG2];
-    $self->error(sprintf('[ev_error] server error operation:%s errnum:%s errstr:%s', $operation, $errnum, $errstr));
-};
-
-#       on_client_accept => sub {
-#         # Begin interacting with the client.
-#         my $client_socket = $_[ARG0];
-#         my $io_wheel = POE::Wheel::ReadWrite->new(
-#           Handle => $client_socket,
-#           InputEvent => "on_client_input",
-#           ErrorEvent => "on_client_error",
-#         );
-#         $_[HEAP]{client}{ $io_wheel->ID() } = $io_wheel;
-#       },
-#       on_server_error => sub {
-#         # Shut down server.
-#         my ($operation, $errnum, $errstr) = @_[ARG0, ARG1, ARG2];
-#         warn "Server $operation error $errnum: $errstr\n";
-#         delete $_[HEAP]{server};
-#       },
 #       on_client_input => sub {
 #         # Handle client input.
 #         my ($input, $wheel_id) = @_[ARG0, ARG1];
 #         $input =~ tr[a-zA-Z][n-za-mN-ZA-M]; # ASCII rot13
 #         $_[HEAP]{client}{$wheel_id}->put($input);
 #       },
-#       on_client_error => sub {
-#         # Handle client error, including disconnect.
-#         my $wheel_id = $_[ARG3];
-#         delete $_[HEAP]{client}{$wheel_id};
-#       },
+};
+
+event ev_client_error => sub {
+    my ($self, $kernel, $operation, $errnum, $errstr, $id) = @_[OBJECT, KERNEL, ARG0, ARG1, ARG2, ARG3];
+    if ($operation eq 'read' and 0 == $errnum) {
+        $self->debug(sprintf('[ev_client_error] id:%s closed connection', $id));
+        delete $self->sockets->{$id};
+        return;
+    }
+    $self->error(sprintf('[ev_client_error] id:%s operation:%s errnum:%s errstr:%s', $id, $operation, $errnum, $errstr));
+};
+
+event ev_server_error => sub {
+    my ($self, $kernel, $operation, $errnum, $errstr) = @_[OBJECT, KERNEL, ARG0, ARG1, ARG2];
+    $self->error(sprintf('[ev_server_error] operation:%s errnum:%s errstr:%s', $operation, $errnum, $errstr));
+    $kernel->yield('ev_shutdown');
+},
 
 before ev_shutdown => sub {
     my ($self, $kernel) = @_[OBJECT, KERNEL];
-    $self->verbose('[ev_shutdown]');
+    $self->verbose(sprintf('[ev_shutdown] closing %i sockets', scalar keys %{$self->sockets()}));
     # $kernel->alias_resolve($self->tcp_server_alias) && $kernel->call($self->tcp_server_alias, 'shutdown');
-    $self->tcp_server();
+    foreach my $id (keys %{$self->sockets()}) {
+        # $self->verbose(sprintf('[ev_shutdown] deleting socket id:%s', $id));
+        delete $self->sockets->{$id};
+    }
+    $kernel->alias_resolve($self->tcp_server_alias) && $kernel->alias_remove($self->tcp_server_alias);
+    $self->tcp_server(undef);
 };
 
 __PACKAGE__->meta->make_immutable;
