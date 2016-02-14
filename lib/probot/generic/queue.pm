@@ -44,6 +44,13 @@ has 'by_key'    => (
     default     => sub {{}},
 );
 
+# prefix for default key
+has 'prefix'    => (
+    isa         => 'Str',
+    is          => 'ro',
+    default     => '',
+);
+
 has 'json'      => (
     isa         => 'JSON',
     is          => 'ro',
@@ -56,7 +63,7 @@ sub build_json {
 sub add {
     my ($self, $args) = @_;
     $self->inc_item_id();
-    my $item_id = $self->item_id;
+    my $item_id = sprintf('%s%i', $self->prefix, $self->item_id);
 
     my $item = { %{$args} };
 
@@ -70,17 +77,24 @@ sub add {
     return $item_id;
 }
 
-sub del {
+sub get_item_id {
     my ($self, $args) = @_;
 
     my $item_id;
     if (ref $args eq 'HASH') {
         my ($k, $v) = each %$args;
         $item_id = $self->by_key->{$k}{$v};
-        $self->verbose(sprintf('[del][%s] key %s = %s', $item_id, $k, $v));
+        $self->verbose(sprintf('[get_item_id] %s = %s => %s', $k, $v, $item_id))
     } else {
         $item_id = $args;
     }
+    return $item_id;
+}
+
+sub del {
+    my ($self, $id) = @_;
+
+    my $item_id = $self->get_item_id($id);
 
     $self->verbose(sprintf('[del] deleting item_id:%s', $item_id));
     foreach my $k (keys %{$self->items->{$item_id}}) {
@@ -96,21 +110,24 @@ sub del {
 sub set {
     my ($self, $id, $args) = @_;
 
+    my $item_id = $self->get_item_id($id);
+
     foreach my $k (keys %$args) {
         my $v = delete $args->{$k};
-        $self->verbose(sprintf('[set][%s] %s = %s', $id, $k, $v));
-        $self->items->{$id}{$k} = $v;
+        $self->verbose(sprintf('[set][%s] %s = %s', $item_id, $k, $v));
+        $self->items->{$item_id}{$k} = $v;
 
         if (exists $self->keys->{$k}) {
-            $self->verbose(sprintf('[set][%s] adding mapping key %s = %s', $id, $k, $v));
-            $self->by_key->{$k}{$v} = $id;
+            $self->verbose(sprintf('[set][%s] adding mapping key %s = %s', $item_id, $k, $v));
+            $self->by_key->{$k}{$v} = $item_id;
         }
     }
 }
 
 sub get {
     my ($self, $id) = @_;
-    return $self->items->{$id};
+    my $item_id = $self->get_item_id($id);
+    return $self->items->{$item_id};
 }
 
 sub dump {
