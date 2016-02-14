@@ -2,6 +2,7 @@
 package probot::generic;
 use warnings;
 use strict;
+# use Moose;
 use MooseX::POE;
 use namespace::autoclean;
 

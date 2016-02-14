@@ -35,6 +35,18 @@ has 'factory'   => (
     lazy        => 1,
     builder     => 'build_factory'
 );
+
+has 'keys'  => (
+    isa         => 'HashRef',
+    is          => 'rw',
+    default     => sub {{}},
+);
+
+has 'by_key'    => (
+    isa         => 'HashRef',
+    is          => 'rw',
+    default     => sub {{}},
+);
 sub build_factory {
     my ($self) = @_;
     return probot::generic::factory->new({
@@ -47,17 +59,6 @@ sub add {
     my ($self, $args) = @_;
     $self->inc_session_nr();
     my $session_id = $self->session_nr;
-    # { type, name, prototype }
-#     for (qw(type name)) {
-#         unless (defined $args->{$_}) {
-#             $self->error(sprintf('[add] config error, attribute %s missing', $_));
-#             return undef;
-#         }
-#     }
-# 
-#     if (exists $self->sessions->{$args->{name}}) {
-#         $self->warn(sprintf('[add] overwriting session name:%s type:%s', $args->{name}, $args->{type}));
-#     }
 
     my $session;
     eval {
@@ -75,35 +76,74 @@ sub add {
     }
 
     $self->sessions->{$session_id} = $session;
+    foreach my $k (keys %$args) {
+        if (exists $self->keys->{$k}) {
+            $self->error(sprintf('[add][by_key][%s] %s = %s', $session_id, $k, $args->{$k}));
+            $self->by_key->{$k}{$args->{$k}} = $session_id;
+        }
+    }
     return $session_id;
 }
 
 sub del {
-    my ($self, $session_id) = @_;
+    my ($self, $args) = @_;
+
+    my $session_id;
+    if (ref $args eq 'HASH') {
+        my ($k, $v) = each %$args;
+        $session_id = $self->by_key->{$k}{$v};
+        $self->verbose(sprintf('[del][%s][by_key] %s = %s', $session_id, $k, $v));
+    } else {
+        $session_id = $args;
+    }
 
     $self->verbose(sprintf('[del] deleting session_id:%s', $session_id));
-    $self->sessions->{$session_id}->shutdown();
+    # $self->sessions->{$session_id}->shutdown();
+    foreach my $k (keys %{$self->sessions->{$session_id}}) {
+        if (exists $self->keys->{$k}) {
+            my $v = $self->sessions->{$session_id}{$k};
+            $self->verbose(sprintf('[del][%s][by_key] %s = %s', $session_id, $k, $v));
+            delete $self->by_key->{$k}{$v};
+        }
+    }
     delete $self->sessions->{$session_id};
 }
 
+sub set {
+    my ($self, $id, $args) = @_;
+
+    foreach my $k (keys %$args) {
+        my $v = delete $args->{$k};
+        $self->verbose(sprintf('[set][%s] %s = %s', $id, $k, $v));
+        $self->sessions->{$id}{$k} = $v;
+
+        if (exists $self->keys->{$k}) {
+            $self->verbose(sprintf('[set][%s][by_key] %s = %s', $id, $k, $v));
+            $self->by_key->{$k}{$v} = $id;
+        }
+    }
+}
+
+sub get {
+    my ($self, $id) = @_;
+    return $self->sessions->{$id};
+}
+
+
 sub shutdown {
     my ($self) = @_;
-    foreach my $session_id (%{$self->sessions()}) {
-        $self->sessions->{$session_id}->shutdown();
+    $self->verbose(sprintf('[ev_shutdown] closing %i sessions', scalar keys %{$self->sessions()}));
+    foreach my $id (keys %{$self->sessions()}) {
+        $self->del($id);
     }
 } 
 
 before ev_shutdown => sub {
     my ($self, $kernel) = @_[OBJECT, KERNEL];
-    $self->verbose(sprintf('[ev_shutdown] closing %i sessions', scalar keys %{$self->sessions()}));
-    foreach my $id (keys %{$self->sessions()}) {
-        $self->del($id);
-    }
+    $self->shutdown();
 };
 
 __PACKAGE__->meta->make_immutable;
 no MooseX::POE;
 
 1;
-
-

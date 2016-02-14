@@ -4,7 +4,7 @@ use warnings;
 use strict;
 use MooseX::POE;
 use namespace::autoclean;
-extends qw(probot::generic);
+extends qw(probot::generic::poe::abstract);
 
 # light wrapper for a POE::Session
 # has some nifty features:
