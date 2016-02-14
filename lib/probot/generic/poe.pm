@@ -4,7 +4,11 @@ use warnings;
 use strict;
 use MooseX::POE;
 use namespace::autoclean;
-extends qw(probot::generic::poe::abstract);
+# use FindBin;
+# use lib $FindBin::Bin.'/../lib';
+# require qw(probot/generic.pm);
+use MooseX::NonMoose;
+extends qw(probot::generic);
 
 # light wrapper for a POE::Session
 # has some nifty features:

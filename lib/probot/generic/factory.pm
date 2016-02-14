@@ -26,6 +26,11 @@ has 'inline' => (
 sub create {
     my ($self, $type, $args) = @_;
 
+    unless (defined $type) {
+        $self->error('[create] type undefined');
+        return undef;
+    }
+
     my $class = (defined $self->base_class ? $self->base_class.'::' : '') . $type;
 
     unless ($self->inline) {
@@ -57,6 +62,6 @@ sub create {
 }
 
 __PACKAGE__->meta->make_immutable;
-no MooseX::POE;
+# no MooseX::POE;
 
 1;

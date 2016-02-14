@@ -2,7 +2,8 @@ package probot::channel::manager;
 
 use warnings;
 use strict;
-use MooseX::POE;
+use Moose;
+# use MooseX::POE;
 use namespace::autoclean;
 use probot::generic::factory;
 extends qw(probot::generic);
@@ -68,7 +69,7 @@ sub add {
 
 
 __PACKAGE__->meta->make_immutable;
-no MooseX::POE;
+# no MooseX::POE;
 
 1;
 

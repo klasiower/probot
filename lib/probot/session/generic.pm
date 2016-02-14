@@ -3,8 +3,6 @@ package probot::session::generic;
 use warnings;
 use strict;
 use MooseX::POE;
-use IO::Socket;
-use POE::Wheel::ReadWrite;
 
 use namespace::autoclean;
 extends qw(probot::generic::poe);

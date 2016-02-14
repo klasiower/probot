@@ -10,6 +10,7 @@ use namespace::autoclean;
 extends qw(probot::channel);
 
 use probot::generic::queue;
+use probot::session::manager;
 
 has port => (
     isa         => 'Int',
@@ -57,12 +58,25 @@ sub build_socket_queue {
         },
     }));
 }
-# has session_timeout => (
-#     isa     => 'Maybe[Num]',
-#     is      => 'rw',
-#     default => 60,
-# );
-# 
+
+has session_manager => (
+    isa     => 'probot::session::manager',
+    is      => 'rw',
+    builder => 'build_sesssion_manager',
+    lazy    => 1,
+);
+sub build_sesssion_manager {
+    my ($self) = @_;
+    $self->session_manager(probot::session::manager->new({
+        name    => $self->alias . '/session_manager',
+    }));
+};
+
+has session_timeout => (
+    isa     => 'Maybe[Num]',
+    is      => 'rw',
+    default => 60,
+);
 
 ## holds sessions indexed by socket_id or session_id
 has session_queue => (
@@ -77,9 +91,11 @@ sub build_session_queue {
         name    => $self->alias . '/session_queue',
         prefix  => 'session-',
         keys        => {
-            session_id  => 1,
             socket_id   => 1,
         },
+        ## callbacks
+        cb_close    => { alias => $self->alias, event => 'ev_session_close'  },
+        cb_output   => { alias => $self->alias, event => 'ev_session_output' },
     }));
 }
 
@@ -89,6 +105,8 @@ after ev_started => sub {
     my ($self, $kernel) = @_[OBJECT, KERNEL];
     $self->verbose('[ev_started]');
 
+    # try to start TCP listener
+    # FIXME implement retry / restart mechanism
     eval {
         $self->tcp_server(POE::Wheel::SocketFactory->new(
             BindPort        => $self->port,
@@ -111,20 +129,24 @@ after ev_started => sub {
 
 event ev_connected => sub {
     my ($self, $kernel, $heap, $socket, $remote_ip_packed, $remote_port) = @_[OBJECT, KERNEL, HEAP, ARG0, ARG1, ARG2];
-    # For INET sockets, $_[ARG1] and $_[ARG2] hold the socket's remote
-    # address and port, respectively.  The address is packed; see
     my $remote_ip = inet_ntoa($remote_ip_packed);
 
+    # allocate socket
     my $socket_id = $self->add_socket({
         remote_ip   => $remote_ip,
         remote_port => $remote_port,
         socket      => $socket,
     });
 
-    my $session_id = $self->add_session({
+    # allocate session and bind it to socket
+    my $session_id = $self->session_manager->add({
+        type        => 'generic',
         socket_id   => $socket_id,
     });
+
+    # bind socket to session
     $self->socket_queue->set($socket_id, { session_id => $session_id });
+
     $self->verbose(sprintf('[ev_connected][%s:%s] wheel_id:%s socket_id:%s session_id:%s',
         $remote_ip, $remote_port, $self->socket_queue->get($socket_id)->{wheel}->ID, $socket_id, $session_id
     ));
@@ -132,17 +154,20 @@ event ev_connected => sub {
 
 event ev_client_input => sub {
     my ($self, $kernel, $input, $id) = @_[OBJECT, KERNEL, ARG0, ARG1];
-    $self->verbose(sprintf('[ev_client_input] wheel_id:%s %s', $id, $input));
+    my $session_id = $self->socket_queue->get({ wheel_id => $id })->{session_id};
+    $self->verbose(sprintf('[ev_client_input] wheel_id:%s session_id:%s %s', $id, $session_id, $input));
 };
 
 event ev_client_error => sub {
     my ($self, $kernel, $operation, $errnum, $errstr, $id) = @_[OBJECT, KERNEL, ARG0, ARG1, ARG2, ARG3];
     if ($operation eq 'read' and 0 == $errnum) {
         $self->debug(sprintf('[ev_client_error] wheel_id:%s closed connection', $id));
-        # $self->session_manager->del({ wheel_id => $id });
+
+        # unbind socket <-> session
+        # and delete allocated queue items
         my $session_id = $self->socket_queue->get({ wheel_id => $id })->{session_id};
         $self->socket_queue->del({ wheel_id => $id });
-        $self->session_queue->del($session_id);
+        $self->session_manager->del($session_id);
         return;
     }
     $self->error(sprintf('[ev_client_error] id:%s operation:%s errnum:%s errstr:%s', $id, $operation, $errnum, $errstr));
@@ -157,14 +182,15 @@ event ev_server_error => sub {
 
 before ev_shutdown => sub {
     my ($self, $kernel) = @_[OBJECT, KERNEL];
-    # $self->session_manager->shutdown();
 
     ## shutdown sessions
-    foreach my $s (keys %{$self->session_queue->items}) { $self->session_queue->del($s) }
-    map { $self->verbose(sprintf('[ev_shutdown][session_queue] %s', $_)) } split /\n/, $self->session_queue->dump;
+    $self->session_manager->shutdown();
+    # show leaks
+    map { $self->verbose(sprintf('[ev_shutdown][session_manager] %s', $_)) } split /\n/, $self->session_manager->dump;
 
     ## shutdown sockets
     foreach my $s (keys %{$self->socket_queue->items}) { $self->socket_queue->del($s) }
+    # show leaks
     map { $self->verbose(sprintf('[ev_shutdown][socket_queue] %s', $_)) } split /\n/, $self->socket_queue->dump;
 
     ## shutdown tcp server
@@ -175,6 +201,7 @@ before ev_shutdown => sub {
 sub add_socket {
     my ($self, $args) = @_;
 
+    # allocated socket_queue item
     my $socket_id = $self->socket_queue->add({
         type        => 'generic',
     });
@@ -188,6 +215,8 @@ sub add_socket {
                 ErrorEvent    => "ev_client_error",
             ),
         });
+        # bind wheel_id to socket_id
+        ## FIXME implement try/catch error handling
         $self->socket_queue->set($socket_id, { wheel_id => $self->socket_queue->get($socket_id)->{wheel}->ID });
         $self->verbose(sprintf('[add_socket][%s:%s] wheel_id:%s',
             $args->{remote_ip}, $args->{remote_port}, $self->socket_queue->get($socket_id)->{wheel}->ID,
@@ -202,28 +231,6 @@ sub add_socket {
     }
     return $socket_id;
 }
-
-sub add_session {
-    my ($self, $args) = @_;
-
-    my $session_id = $self->session_queue->add({
-        type        => 'generic',
-    });
-    eval {
-        $self->session_queue->set($session_id, {
-            socket_id   => $args->{socket_id},
-        });
-    };  if ($@) {
-        my $e = $@;  chomp $e;
-        $self->error(sprintf('[add_session] can\'t start session:(%s)',
-            $e
-        ));
-        $self->session_queue->del($session_id);
-        return undef;
-    }
-    return $session_id;
-}
-
 
 __PACKAGE__->meta->make_immutable;
 no MooseX::POE;

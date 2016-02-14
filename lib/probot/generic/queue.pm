@@ -65,7 +65,7 @@ sub add {
     $self->inc_item_id();
     my $item_id = sprintf('%s%i', $self->prefix, $self->item_id);
 
-    my $item = { %{$args} };
+    my $item = { %{$args // {}} };
 
     $self->items->{$item_id} = $item;
     foreach my $k (keys %$args) {
@@ -110,15 +110,16 @@ sub del {
 sub set {
     my ($self, $id, $args) = @_;
 
+    return unless defined $args;
     my $item_id = $self->get_item_id($id);
 
     foreach my $k (keys %$args) {
         my $v = delete $args->{$k};
-        $self->verbose(sprintf('[set][%s] %s = %s', $item_id, $k, $v));
+        $self->verbose(sprintf('[set][%s] %s = %s', $item_id, $k, $v // ''));
         $self->items->{$item_id}{$k} = $v;
 
         if (exists $self->keys->{$k}) {
-            $self->verbose(sprintf('[set][%s] adding mapping key %s = %s', $item_id, $k, $v));
+            $self->verbose(sprintf('[set][%s] adding mapping key %s = %s', $item_id, $k, $v // ''));
             $self->by_key->{$k}{$v} = $item_id;
         }
     }
@@ -141,7 +142,7 @@ sub dump {
 }
 
 __PACKAGE__->meta->make_immutable;
-no MooseX::POE;
+# no MooseX::POE;
 
 1;
 

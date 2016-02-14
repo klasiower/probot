@@ -2,8 +2,8 @@
 package probot::generic;
 use warnings;
 use strict;
-# use Moose;
-use MooseX::POE;
+use Moose;
+# use MooseX::POE;
 use namespace::autoclean;
 
 has 'name' => ( is => 'rw', required => 1 );
@@ -32,8 +32,6 @@ sub warn {
     my ($self, $string) = @_;
     $self->log(sprintf('[WARN][%i][%s] %s', time(), $self->name, $string));
 }
-
-1;
 
 __PACKAGE__->meta->make_immutable;
 no MooseX::POE;
