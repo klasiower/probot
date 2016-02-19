@@ -10,7 +10,7 @@ use namespace::autoclean;
 extends qw(probot::channel);
 
 use probot::generic::queue;
-use probot::session::manager;
+# use probot::session::manager;
 
 has port => (
     isa         => 'Int',
@@ -59,45 +59,45 @@ sub build_socket_queue {
     }));
 }
 
-has session_manager => (
-    isa     => 'probot::session::manager',
-    is      => 'rw',
-    builder => 'build_sesssion_manager',
-    lazy    => 1,
-);
-sub build_sesssion_manager {
-    my ($self) = @_;
-    $self->session_manager(probot::session::manager->new({
-        name    => $self->alias . '/session_manager',
-    }));
-};
-
-has session_timeout => (
-    isa     => 'Maybe[Num]',
-    is      => 'rw',
-    default => 60,
-);
-
-## holds sessions indexed by socket_id or session_id
-has session_queue => (
-    isa     => 'Maybe[probot::generic::queue]',
-    is      => 'rw',
-    builder => 'build_session_queue',
-    lazy    => 1,
-);
-sub build_session_queue {
-    my ($self) = @_;
-    $self->session_queue(probot::generic::queue->new({
-        name    => $self->alias . '/session_queue',
-        prefix  => 'session-',
-        keys        => {
-            socket_id   => 1,
-        },
-        ## callbacks
-        cb_close    => { alias => $self->alias, event => 'ev_session_close'  },
-        cb_output   => { alias => $self->alias, event => 'ev_session_output' },
-    }));
-}
+# has session_manager => (
+#     isa     => 'probot::session::manager',
+#     is      => 'rw',
+#     builder => 'build_sesssion_manager',
+#     lazy    => 1,
+# );
+# sub build_sesssion_manager {
+#     my ($self) = @_;
+#     $self->session_manager(probot::session::manager->new({
+#         name    => $self->alias . '/session_manager',
+#     }));
+# };
+# 
+# has session_timeout => (
+#     isa     => 'Maybe[Num]',
+#     is      => 'rw',
+#     default => 60,
+# );
+# 
+# ## holds sessions indexed by socket_id or session_id
+# has session_queue => (
+#     isa     => 'Maybe[probot::generic::queue]',
+#     is      => 'rw',
+#     builder => 'build_session_queue',
+#     lazy    => 1,
+# );
+# sub build_session_queue {
+#     my ($self) = @_;
+#     $self->session_queue(probot::generic::queue->new({
+#         name    => $self->alias . '/session_queue',
+#         prefix  => 'session-',
+#         keys        => {
+#             socket_id   => 1,
+#         },
+#         ## callbacks
+#         cb_close    => { alias => $self->alias, event => 'ev_session_close'  },
+#         cb_output   => { alias => $self->alias, event => 'ev_session_output' },
+#     }));
+# }
 
 
 #######################################################
@@ -138,18 +138,22 @@ event ev_connected => sub {
         socket      => $socket,
     });
 
-    # allocate session and bind it to socket
-    my $session_id = $self->session_manager->add({
-        type        => 'generic',
-        socket_id   => $socket_id,
-    });
-
-    # bind socket to session
-    $self->socket_queue->set($socket_id, { session_id => $session_id });
-
+#     # allocate session and bind it to socket
+#     my $session_id = $self->session_manager->add({
+#         type        => 'generic',
+#         socket_id   => $socket_id,
+#     });
+# 
+#     # bind socket to session
+#     $self->socket_queue->set($socket_id, { session_id => $session_id });
+# 
+#     $self->verbose(sprintf('[ev_connected][%s:%s] wheel_id:%s socket_id:%s session_id:%s',
+#         $remote_ip, $remote_port, $self->socket_queue->get($socket_id)->{wheel}->ID, $socket_id, $session_id
+#     ));
     $self->verbose(sprintf('[ev_connected][%s:%s] wheel_id:%s socket_id:%s session_id:%s',
         $remote_ip, $remote_port, $self->socket_queue->get($socket_id)->{wheel}->ID, $socket_id, $session_id
     ));
+    $kernel->post($self->cb_new_connection->{alias}, $self->cb_new_connection->{event}, $socket_id));
 };
 
 event ev_client_input => sub {
@@ -163,11 +167,13 @@ event ev_client_error => sub {
     if ($operation eq 'read' and 0 == $errnum) {
         $self->debug(sprintf('[ev_client_error] wheel_id:%s closed connection', $id));
 
-        # unbind socket <-> session
-        # and delete allocated queue items
-        my $session_id = $self->socket_queue->get({ wheel_id => $id })->{session_id};
+#         # unbind socket <-> session
+#         # and delete allocated queue items
+#         my $session_id = $self->socket_queue->get({ wheel_id => $id })->{session_id};
+#         $self->socket_queue->del({ wheel_id => $id });
+#         $self->session_manager->del($session_id);
+
         $self->socket_queue->del({ wheel_id => $id });
-        $self->session_manager->del($session_id);
         return;
     }
     $self->error(sprintf('[ev_client_error] id:%s operation:%s errnum:%s errstr:%s', $id, $operation, $errnum, $errstr));
@@ -178,15 +184,15 @@ event ev_server_error => sub {
     my ($self, $kernel, $operation, $errnum, $errstr) = @_[OBJECT, KERNEL, ARG0, ARG1, ARG2];
     $self->error(sprintf('[ev_server_error] operation:%s errnum:%s errstr:%s', $operation, $errnum, $errstr));
     $kernel->yield('ev_shutdown');
-},
+};
 
 before ev_shutdown => sub {
     my ($self, $kernel) = @_[OBJECT, KERNEL];
 
-    ## shutdown sessions
-    $self->session_manager->shutdown();
-    # show leaks
-    map { $self->verbose(sprintf('[ev_shutdown][session_manager] %s', $_)) } split /\n/, $self->session_manager->dump;
+#     ## shutdown sessions
+#     $self->session_manager->shutdown();
+#     # show leaks
+#     map { $self->verbose(sprintf('[ev_shutdown][session_manager] %s', $_)) } split /\n/, $self->session_manager->dump;
 
     ## shutdown sockets
     foreach my $s (keys %{$self->socket_queue->items}) { $self->socket_queue->del($s) }

@@ -4,7 +4,7 @@ use warnings;
 use strict;
 use MooseX::POE;
 use namespace::autoclean;
-extends qw(probot::generic);
+with qw(probot::generic);
 
 # generic factory interface
 

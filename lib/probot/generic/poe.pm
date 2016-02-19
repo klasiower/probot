@@ -4,11 +4,14 @@ use warnings;
 use strict;
 use MooseX::POE;
 use namespace::autoclean;
+
+with qw(probot::generic);
+
 # use FindBin;
 # use lib $FindBin::Bin.'/../lib';
 # require qw(probot/generic.pm);
-use MooseX::NonMoose;
-extends qw(probot::generic);
+# use MooseX::NonMoose;
+# extends qw(probot::generic);
 
 # light wrapper for a POE::Session
 # has some nifty features:
@@ -77,6 +80,7 @@ event ev_shutdown => sub {
     $self->verbose('[ev_shutdown]');
     $self->is_shutting_down(1);
     $self->del_all_alarms();
+    $kernel->alias_remove($self->alias);
 };
 
 event ev_add_alarm => sub {

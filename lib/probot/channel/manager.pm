@@ -2,11 +2,10 @@ package probot::channel::manager;
 
 use warnings;
 use strict;
-use Moose;
-# use MooseX::POE;
+use MooseX::POE;
 use namespace::autoclean;
 use probot::generic::factory;
-extends qw(probot::generic);
+extends qw(probot::generic::poe);
 
 has 'name'      => (
     isa         => 'Str',
@@ -34,6 +33,12 @@ sub build_factory {
     });
 }
 
+has 'cb_new_connection' => (
+    isa         => 'HashRef',
+    is          => 'ro',
+    required    => 1,
+);
+
 sub add {
     my ($self, $args) = @_;
     # { type, name, prototype }
@@ -54,7 +59,11 @@ sub add {
             $args->{type}, {
                 %{$args->{prototype} // {}}, (
                     name => $args->{name},
-                    type => $args->{type}
+                    type => $args->{type},
+                    cb_new_connection   => {
+                        alias   => $self->alias,
+                        event   => 'ev_new_connection',
+                    },
                 )
             });
     };  if ($@) {
@@ -65,11 +74,16 @@ sub add {
 
     $self->channels->{$args->{name}} = $channel;
     return $channel;
-}
+};
 
+event ev_new_connection => sub {
+    my ($self, $kernel, $id) = @_[OBJECT, KERNEL, ARG0];
+    $self->verbose(sprintf('[ev_new_connection] id:%s', $id));
+    $kernel->post($self->cb_new_connection->alias, $self->cb_new_connection->event, $id);
+};
 
 __PACKAGE__->meta->make_immutable;
-# no MooseX::POE;
+no MooseX::POE;
 
 1;
 

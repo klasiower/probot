@@ -2,7 +2,7 @@
 package probot::generic;
 use warnings;
 use strict;
-use Moose;
+use Moose::Role;
 # use MooseX::POE;
 use namespace::autoclean;
 
@@ -33,7 +33,7 @@ sub warn {
     $self->log(sprintf('[WARN][%i][%s] %s', time(), $self->name, $string));
 }
 
-__PACKAGE__->meta->make_immutable;
-no MooseX::POE;
+# __PACKAGE__->meta->make_immutable;
+# no MooseX::POE;
 
 1;

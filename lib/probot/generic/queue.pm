@@ -6,7 +6,7 @@ use Moose;
 # just for dumping / debugging
 use JSON;
 use namespace::autoclean;
-extends qw(probot::generic);
+with qw(probot::generic);
 
 has 'name'      => (
     isa         => 'Str',

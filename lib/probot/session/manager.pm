@@ -72,6 +72,7 @@ sub add {
 
 sub del {
     my ($self, $session_id) = @_;
+    # FIXME ufly and probably errorneous
     POE::Kernel->call($session_id, 'ev_shutdown');
     $self->sessions->del($session_id);
 }
@@ -89,7 +90,7 @@ sub get {
 
 sub shutdown {
     my ($self) = @_;
-    $self->verbose(sprintf('[ev_shutdown] closing %i sessions', scalar keys %{$self->sessions->items()}));
+    $self->verbose(sprintf('[shutdown] closing %i sessions', scalar keys %{$self->sessions->items()}));
     foreach my $id (keys %{$self->sessions->items()}) {
         $self->sessions->del($id);
     }
