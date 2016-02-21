@@ -43,6 +43,7 @@ after START => sub {
 
 event ev_started => sub {
     my ($self, $kernel) = @_[OBJECT, KERNEL];
+    $self->verbose(sprintf('[probot::generic::poe::ev_started] alias:%s', $self->alias));
 };
 
 event _default => sub {

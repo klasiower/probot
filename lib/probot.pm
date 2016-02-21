@@ -6,19 +6,19 @@ use MooseX::POE;
 use namespace::autoclean;
 extends qw(probot::generic::poe);
 
-use probot::channel::manager;
+use probot::connection::manager;
 use probot::session::manager;
 
-has channel_manager => (
-    isa     => 'probot::channel::manager',
+has connection_manager => (
+    isa     => 'probot::connection::manager',
     is      => 'ro',
-    builder => 'build_channel_manager',
+    builder => 'build_connection_manager',
     lazy    => 1,
 );
-sub build_channel_manager {
+sub build_connection_manager {
     my ($self) = @_;
-    $self->verbose('[build_channel_manager]');
-    return probot::channel::manager->new({ name => $self->name .'/channel_manager' });
+    $self->verbose('[build_connection_manager]');
+    return probot::connection::manager->new({ name => $self->name .'/connection_manager' });
 }
 
 has session_manager => (
@@ -36,7 +36,7 @@ sub build_session_manager {
 after ev_started => sub {
     my ($self, $kernel) = @_[OBJECT, KERNEL];
     $self->verbose('[ev_started]');
-    $self->channel_manager->add({
+    $self->connection_manager->add({
         type        => 'socket::listener',
         name        => 'net-in',
         prototype   => {

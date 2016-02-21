@@ -1,4 +1,4 @@
-package probot::channel::socket::listener;
+package probot::connection::socket::listener;
 
 use warnings;
 use strict;
@@ -7,13 +7,13 @@ use IO::Socket;
 use POE qw(Wheel::SocketFactory Wheel::ReadWrite);
 
 use namespace::autoclean;
-extends qw(probot::channel);
+extends qw(probot::connection);
 
 use probot::generic::queue;
-# use probot::session::manager;
+# use probot::connection::manager;
 
 has port => (
-    isa         => 'Int',
+    isa         => 'Num',
     is          => 'ro',
     required    => 1,
 );
@@ -40,7 +40,7 @@ sub build_tcp_server_alias {
     return $self->alias . '/tcp_server',
 }
 
-## holds tcp sockets indexed by wheel_id or socket_id or session_id
+## holds tcp sockets indexed by wheel_id or socket_id or connection_id
 has socket_queue => (
     isa     => 'Maybe[probot::generic::queue]',
     is      => 'rw',
@@ -53,52 +53,31 @@ sub build_socket_queue {
         name    => $self->alias . '/socket_queue',
         prefix  => 'socket-',
         keys        => {
-            wheel_id    => 1,
-            session_id  => 1,
+            wheel_id        => 1,
+            connection_id   => 1,
+            socket_id       => 1, # redundant, thats also the main index
         },
     }));
 }
 
-# has session_manager => (
-#     isa     => 'probot::session::manager',
-#     is      => 'rw',
-#     builder => 'build_sesssion_manager',
-#     lazy    => 1,
-# );
-# sub build_sesssion_manager {
-#     my ($self) = @_;
-#     $self->session_manager(probot::session::manager->new({
-#         name    => $self->alias . '/session_manager',
-#     }));
-# };
-# 
-# has session_timeout => (
-#     isa     => 'Maybe[Num]',
-#     is      => 'rw',
-#     default => 60,
-# );
-# 
-# ## holds sessions indexed by socket_id or session_id
-# has session_queue => (
-#     isa     => 'Maybe[probot::generic::queue]',
-#     is      => 'rw',
-#     builder => 'build_session_queue',
-#     lazy    => 1,
-# );
-# sub build_session_queue {
-#     my ($self) = @_;
-#     $self->session_queue(probot::generic::queue->new({
-#         name    => $self->alias . '/session_queue',
-#         prefix  => 'session-',
-#         keys        => {
-#             socket_id   => 1,
-#         },
-#         ## callbacks
-#         cb_close    => { alias => $self->alias, event => 'ev_session_close'  },
-#         cb_output   => { alias => $self->alias, event => 'ev_session_output' },
-#     }));
-# }
+# communication with upstream session
+has cb_add_connection => (
+    isa         => 'HashRef',
+    is          => 'ro',
+    required    => 1,
+);
 
+has cb_del_connection => (
+    isa         => 'HashRef',
+    is          => 'ro',
+    required    => 1,
+);
+
+has cb_get_input => (
+    isa         => 'HashRef',
+    is          => 'ro',
+    required    => 1,
+);
 
 #######################################################
 after ev_started => sub {
@@ -138,42 +117,52 @@ event ev_connected => sub {
         socket      => $socket,
     });
 
-#     # allocate session and bind it to socket
-#     my $session_id = $self->session_manager->add({
-#         type        => 'generic',
-#         socket_id   => $socket_id,
-#     });
-# 
-#     # bind socket to session
-#     $self->socket_queue->set($socket_id, { session_id => $session_id });
-# 
-#     $self->verbose(sprintf('[ev_connected][%s:%s] wheel_id:%s socket_id:%s session_id:%s',
-#         $remote_ip, $remote_port, $self->socket_queue->get($socket_id)->{wheel}->ID, $socket_id, $session_id
-#     ));
-    $self->verbose(sprintf('[ev_connected][%s:%s] wheel_id:%s socket_id:%s session_id:%s',
-        $remote_ip, $remote_port, $self->socket_queue->get($socket_id)->{wheel}->ID, $socket_id, $session_id
+    # inform parent connection manager and get connection_id
+    my $connection_id = $self->add_connection({
+        socket_id   => $socket_id
+    });
+
+    $self->verbose(sprintf('[ev_connected][%s:%s] wheel_id:%s socket_id:%s connection_id:%s',
+        $remote_ip, $remote_port, $self->socket_queue->get($socket_id)->{wheel}->ID, $socket_id, $connection_id
     ));
-    $kernel->post($self->cb_new_connection->{alias}, $self->cb_new_connection->{event}, $socket_id));
 };
 
 event ev_client_input => sub {
     my ($self, $kernel, $input, $id) = @_[OBJECT, KERNEL, ARG0, ARG1];
-    my $session_id = $self->socket_queue->get({ wheel_id => $id })->{session_id};
-    $self->verbose(sprintf('[ev_client_input] wheel_id:%s session_id:%s %s', $id, $session_id, $input));
+    my $connection_id = $self->socket_queue->get({ wheel_id => $id })->{connection_id};
+    $self->verbose(sprintf('[ev_client_input] wheel_id:%s connection_id:%s %s', $id, $connection_id, $input));
+    $kernel->post($self->cb_get_input->{alias}, $self->cb_get_input->{event}, {
+        connection_id => $connection_id, input => $input
+    });
+};
+
+event ev_put_output => sub {
+    my ($self, $kernel, $context) = @_[OBJECT, KERNEL, ARG0];
+    my $socket = $self->socket_queue->get({ connection_id => $context->{connection_id} });
+    unless (defined $socket) {
+        $self->error(sprintf('[ev_put_output] connection_id:%s doesn\'t exist', $context->{connection_id}));
+        return undef;
+    }
+    $self->verbose(sprintf('[ev_put_output][%s:%s] connection_id:%s %s',
+        $socket->{remote_ip}, $socket->{remote_port}, $context->{connection_id}, $context->{output}
+    ));
+    $socket->{wheel}->put($context->{output});
 };
 
 event ev_client_error => sub {
     my ($self, $kernel, $operation, $errnum, $errstr, $id) = @_[OBJECT, KERNEL, ARG0, ARG1, ARG2, ARG3];
     if ($operation eq 'read' and 0 == $errnum) {
-        $self->debug(sprintf('[ev_client_error] wheel_id:%s closed connection', $id));
-
-#         # unbind socket <-> session
-#         # and delete allocated queue items
-#         my $session_id = $self->socket_queue->get({ wheel_id => $id })->{session_id};
-#         $self->socket_queue->del({ wheel_id => $id });
-#         $self->session_manager->del($session_id);
+        # unbind socket <-> connection
+        # and delete allocated queue items
+        my $connection_id = $self->socket_queue->get({ wheel_id => $id })->{connection_id};
+        my $socket_id     = $self->socket_queue->get({ wheel_id => $id })->{socket_id};
+        $kernel->call($self->cb_del_connection->{alias}, $self->cb_del_connection->{event}, $connection_id);
 
         $self->socket_queue->del({ wheel_id => $id });
+
+        $self->debug(sprintf('[ev_client_error] wheel_id:%s socket_id:%s connection_id:%s closed connection',
+            $id, $socket_id, $connection_id
+        ));
         return;
     }
     $self->error(sprintf('[ev_client_error] id:%s operation:%s errnum:%s errstr:%s', $id, $operation, $errnum, $errstr));
@@ -189,13 +178,12 @@ event ev_server_error => sub {
 before ev_shutdown => sub {
     my ($self, $kernel) = @_[OBJECT, KERNEL];
 
-#     ## shutdown sessions
-#     $self->session_manager->shutdown();
-#     # show leaks
-#     map { $self->verbose(sprintf('[ev_shutdown][session_manager] %s', $_)) } split /\n/, $self->session_manager->dump;
-
     ## shutdown sockets
-    foreach my $s (keys %{$self->socket_queue->items}) { $self->socket_queue->del($s) }
+    foreach my $s (keys %{$self->socket_queue->items}) {
+        my $connection_id = $self->socket_queue->get($s)->{connection_id};
+        $kernel->call($self->cb_del_connection->{alias}, $self->cb_del_connection->{event}, $connection_id);
+        $self->socket_queue->del($s)
+    }
     # show leaks
     map { $self->verbose(sprintf('[ev_shutdown][socket_queue] %s', $_)) } split /\n/, $self->socket_queue->dump;
 
@@ -223,7 +211,8 @@ sub add_socket {
         });
         # bind wheel_id to socket_id
         ## FIXME implement try/catch error handling
-        $self->socket_queue->set($socket_id, { wheel_id => $self->socket_queue->get($socket_id)->{wheel}->ID });
+        $self->socket_queue->set($socket_id, { wheel_id  => $self->socket_queue->get($socket_id)->{wheel}->ID });
+        $self->socket_queue->set($socket_id, { socket_id => $socket_id });
         $self->verbose(sprintf('[add_socket][%s:%s] wheel_id:%s',
             $args->{remote_ip}, $args->{remote_port}, $self->socket_queue->get($socket_id)->{wheel}->ID,
         ));
@@ -236,6 +225,28 @@ sub add_socket {
         return undef;
     }
     return $socket_id;
+}
+
+sub add_connection {
+    my ($self, $context) = @_;
+    my $kernel = $poe_kernel;
+
+    my $socket = $self->socket_queue->get({ socket_id => $context->{socket_id} });
+    # FIXME error handling if socket is not found
+    $context = {
+        remote_ip   => $socket->{remote_ip},
+        remote_port => $socket->{remote_port},
+        socket_id   => $context->{socket_id},
+    };
+
+    # inform parent connection manager and get connection_id
+    my $connection = $kernel->call($self->cb_add_connection->{alias}, $self->cb_add_connection->{event}, $context);
+    $self->socket_queue->set($context->{socket_id}, { connection_id => $connection->{connection_id} });
+
+    $self->verbose(sprintf('[add_connection] %s connection_id:%s',
+        ( join ' ', map { sprintf('%s:%s', $_, $context->{$_} // '') } keys %$context ), $connection->{connection_id}
+    ));
+    return $connection->{connection_id};
 }
 
 __PACKAGE__->meta->make_immutable;

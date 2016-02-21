@@ -70,7 +70,7 @@ sub add {
     $self->items->{$item_id} = $item;
     foreach my $k (keys %$args) {
         if (exists $self->keys->{$k}) {
-            $self->verbose(sprintf('[add][%s] key %s = %s', $item_id, $k, $args->{$k}));
+            # $self->verbose(sprintf('[add][%s] key %s = %s', $item_id, $k, $args->{$k}));
             $self->by_key->{$k}{$args->{$k}} = $item_id;
         }
     }
@@ -84,7 +84,7 @@ sub get_item_id {
     if (ref $args eq 'HASH') {
         my ($k, $v) = each %$args;
         $item_id = $self->by_key->{$k}{$v};
-        $self->verbose(sprintf('[get_item_id] %s = %s => %s', $k, $v, $item_id))
+        # $self->verbose(sprintf('[get_item_id] %s = %s => %s', $k, $v, $item_id))
     } else {
         $item_id = $args;
     }
@@ -96,11 +96,11 @@ sub del {
 
     my $item_id = $self->get_item_id($id);
 
-    $self->verbose(sprintf('[del] deleting item_id:%s', $item_id));
+    # $self->verbose(sprintf('[del] deleting item_id:%s', $item_id));
     foreach my $k (keys %{$self->items->{$item_id}}) {
         if (exists $self->keys->{$k}) {
             my $v = $self->items->{$item_id}{$k};
-            $self->verbose(sprintf('[del][%s] removing mapping key %s = %s', $item_id, $k, $v));
+            # $self->verbose(sprintf('[del][%s] removing mapping key %s = %s', $item_id, $k, $v));
             delete $self->by_key->{$k}{$v};
         }
     }
@@ -115,11 +115,11 @@ sub set {
 
     foreach my $k (keys %$args) {
         my $v = delete $args->{$k};
-        $self->verbose(sprintf('[set][%s] %s = %s', $item_id, $k, $v // ''));
+        # $self->verbose(sprintf('[set][%s] %s = %s', $item_id, $k, $v // ''));
         $self->items->{$item_id}{$k} = $v;
 
         if (exists $self->keys->{$k}) {
-            $self->verbose(sprintf('[set][%s] adding mapping key %s = %s', $item_id, $k, $v // ''));
+            # $self->verbose(sprintf('[set][%s] adding mapping key %s = %s', $item_id, $k, $v // ''));
             $self->by_key->{$k}{$v} = $item_id;
         }
     }
@@ -127,7 +127,13 @@ sub set {
 
 sub get {
     my ($self, $id) = @_;
+    unless (defined $id) { $self->error('[get] id undefined') }
+
     my $item_id = $self->get_item_id($id);
+    unless (defined $item_id and exists $self->items->{$item_id}) {
+        $self->error(sprintf('[get] item_id:%s doesn\'t exist', $self->json->encode($id)));
+        return undef;
+    }
     return $self->items->{$item_id};
 }
 
@@ -143,6 +149,4 @@ sub dump {
 
 __PACKAGE__->meta->make_immutable;
 # no MooseX::POE;
-
-1;
 

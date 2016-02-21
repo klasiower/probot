@@ -1,4 +1,4 @@
-package probot::channel;
+package probot::connection;
 
 use warnings;
 use strict;

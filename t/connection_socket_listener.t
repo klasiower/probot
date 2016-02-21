@@ -5,8 +5,17 @@ use strict;
 
 use FindBin;
 use lib $FindBin::Bin.'/../lib';
+use lib $FindBin::Bin.'/../t/lib';
 
-my $lib_to_test = 'probot::channel::manager';
+sub POE::Kernel::ASSERT_DEFAULT () { 1 }
+sub POE::Kernel::ASSERT_EVENTS  () { 1 }
+# sub POE::Kernel::TRACE_EVENTS   () { 1 }
+# sub POE::Kernel::TRACE_DEFAULT  () { 1 }
+
+use MooseX::POE;
+use namespace::autoclean;
+
+my $lib_to_test = 'test_connection_socket_listener';
 eval "use $lib_to_test;"; if ($@) { die $@ }
 
 my $config = {
@@ -33,8 +42,9 @@ sub verbose { $config->{verbose} && print STDERR "[VERB] @_\n" }
 sub warn    {                       print STDERR "[WARN] @_\n" }
 sub error   {                       print STDERR  "[ERR] @_\n" }
 
-
-my $test = "$lib_to_test"->new();
-POE::Kernel->run();
+my $mysession = test_connection_socket_listener->new({ name => 'mysession' });
+$mysession->verbose('i am alive');
+$poe_kernel->run();
+$mysession->verbose('poe_kernel stopped');
 
 exit 0;

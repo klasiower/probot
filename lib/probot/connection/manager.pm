@@ -1,4 +1,4 @@
-package probot::channel::manager;
+package probot::connection::manager;
 
 use warnings;
 use strict;
@@ -13,7 +13,7 @@ has 'name'      => (
     default     => sub { __PACKAGE__ }
 );
 
-has 'channels'  => (
+has 'connections'  => (
     isa         => 'HashRef',
     is          => 'rw',
     default     => sub { {} },
@@ -29,7 +29,7 @@ sub build_factory {
     my ($self) = @_;
     return probot::generic::factory->new({
         name        => $self->name . '/factory',
-        base_class  => 'probot::channel',
+        base_class  => 'probot::connection',
     });
 }
 
@@ -49,13 +49,13 @@ sub add {
         }
     }
 
-    if (exists $self->channels->{$args->{name}}) {
-        $self->warn(sprintf('[add] overwriting channel name:%s type:%s', $args->{name}, $args->{type}));
+    if (exists $self->connections->{$args->{name}}) {
+        $self->warn(sprintf('[add] overwriting connection name:%s type:%s', $args->{name}, $args->{type}));
     }
 
-    my $channel;
+    my $connection;
     eval {
-        $channel = $self->factory->create(
+        $connection = $self->factory->create(
             $args->{type}, {
                 %{$args->{prototype} // {}}, (
                     name => $args->{name},
@@ -68,12 +68,12 @@ sub add {
             });
     };  if ($@) {
         my $e = $@;  chomp $e;
-        $self->error(sprintf('[add] error creating channel name:%s type:%s (%s)', $args->{name}, $args->{type}, $e));
+        $self->error(sprintf('[add] error creating connection name:%s type:%s (%s)', $args->{name}, $args->{type}, $e));
         return undef;
     }
 
-    $self->channels->{$args->{name}} = $channel;
-    return $channel;
+    $self->connections->{$args->{name}} = $connection;
+    return $connection;
 };
 
 event ev_new_connection => sub {
